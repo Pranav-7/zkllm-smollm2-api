@@ -178,7 +178,19 @@ def commit_layer_weights(weights: dict, prefix: str) -> tuple[float, int]:
 def _run(cmd: str, tag: str, cwd: str) -> None:
     r = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd=cwd)
     if r.returncode != 0:
-        raise RuntimeError(f"[{tag}] FAILED: {cmd}\nSTDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}")
+        # SIGSEGV = 139, SIGABRT = 134, etc. Add the signal name for diagnosis.
+        import signal as _sig
+        sig_name = ""
+        if r.returncode > 128:
+            try:
+                sig_name = f" (signal {_sig.Signals(r.returncode - 128).name})"
+            except (ValueError, KeyError):
+                sig_name = f" (signal {r.returncode - 128})"
+        raise RuntimeError(
+            f"[{tag}] FAILED (rc={r.returncode}{sig_name}): {cmd}\n"
+            f"CWD: {cwd}\n"
+            f"STDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}"
+        )
 
 
 def prove_one_layer(
@@ -212,10 +224,13 @@ def prove_one_layer(
     X = (torch.tensor(np.fromfile(input_file, dtype=np.int32).reshape(SEQ_LEN, HIDDEN),
                       device="cuda", dtype=torch.float64) / (1 << LOG_SF))
     rms_inv = 1.0 / torch.sqrt((X ** 2).mean(dim=-1) + _cfg.rms_norm_eps)
-    fileio_utils.save_int(rms_inv, 1 << 16, "rms_inv_temp.bin")
+    # The rmsnorm CUDA binary reads "rms_inv_temp.bin" from its own CWD.
+    # We launch it with cwd=ZKLLM_ROOT, so write the temp file there (not CWD of python process).
+    rms_inv_path = Path(cwd) / "rms_inv_temp.bin"
+    fileio_utils.save_int(rms_inv, 1 << 16, str(rms_inv_path))
     _run(f"{bin_rmsnorm} input {input_file} {SEQ_LEN} {HIDDEN} {WORKDIR} {prefix} {rn1_out}",
          "rms1", cwd)
-    os.system("rm -f ./rms_inv_temp.bin")
+    rms_inv_path.unlink(missing_ok=True)
 
     # STEP 2a: QKV linear
     if on_phase: on_phase("attn_linear")
@@ -276,20 +291,21 @@ def prove_one_layer(
     X2 = (torch.tensor(np.fromfile(skip1, dtype=np.int32).reshape(SEQ_LEN, HIDDEN),
                        device="cuda", dtype=torch.float64) / (1 << LOG_SF))
     rms_inv2 = 1.0 / torch.sqrt((X2 ** 2).mean(dim=-1) + _cfg.rms_norm_eps)
-    fileio_utils.save_int(rms_inv2, 1 << 16, "rms_inv_temp.bin")
+    rms_inv2_path = Path(cwd) / "rms_inv_temp.bin"
+    fileio_utils.save_int(rms_inv2, 1 << 16, str(rms_inv2_path))
     _run(f"{bin_rmsnorm} post_attention {skip1} {SEQ_LEN} {HIDDEN} {WORKDIR} {prefix} {rn2_out}",
          "rms2", cwd)
-    os.system("rm -f ./rms_inv_temp.bin")
+    rms_inv2_path.unlink(missing_ok=True)
 
     # STEP 5: FFN
     if on_phase: on_phase("ffn")
     xs = torch.arange(-(1 << 7), (1 << 7), step=1.0 / (1 << 12))
     ys = xs * torch.sigmoid(xs)
-    fileio_utils.save_int(ys, 1 << 16, "swiglu-table.bin")
+    swiglu_path = Path(cwd) / "swiglu-table.bin"
+    fileio_utils.save_int(ys, 1 << 16, str(swiglu_path))
     _run(f"{bin_ffn} {rn2_out} {SEQ_LEN} {HIDDEN} {INTER} {WORKDIR} {prefix} {ffn_out}",
          "ffn", cwd)
-    swiglu_tbl = Path(cwd) / "swiglu-table.bin"
-    if swiglu_tbl.exists(): swiglu_tbl.unlink()
+    if swiglu_path.exists(): swiglu_path.unlink()
 
     # STEP 6: skip #2
     if on_phase: on_phase("skip2")
