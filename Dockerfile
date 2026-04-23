@@ -48,6 +48,7 @@ RUN pip install -r requirements.txt
 # --- build zkllm (vendored, already pre-patched) ---
 COPY zkllm/ /app/zkllm/
 COPY scripts/ /app/scripts/
+RUN test -f /app/zkllm/Makefile || (echo "ERROR: zkllm/Makefile missing. Did you run 'bash setup.sh' locally before committing? The zkllm/ folder must contain the vendored source, not a git submodule pointer." && exit 1)
 RUN chmod +x /app/scripts/*.sh \
  && bash /app/scripts/build_zkllm.sh /app/zkllm "${SM_ARCH}"
 

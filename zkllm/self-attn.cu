@@ -1,54 +1,3 @@
-#!/usr/bin/env bash
-# Vendoring helper — run this ONCE locally before first commit.
-# It clones the upstream zkllm-ccs2024 into ./zkllm/ and applies the
-# same patches that the notebook applies at runtime (self-attn.cu,
-# ffn.cu, Makefile), so that the Dockerfile can just `make` without
-# any runtime git-clone + sed gymnastics.
-#
-# Usage:   bash scripts/vendor_zkllm.sh
-# Result:  ./zkllm/  populated with patched source + Makefile
-
-set -euxo pipefail
-
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DEST="$ROOT/zkllm"
-
-if [[ -f "$DEST/Makefile" && -f "$DEST/self-attn.cu" ]]; then
-    echo "zkllm/ already populated. Delete it first if you want to re-vendor."
-    exit 0
-fi
-
-TMPDIR="$(mktemp -d)"
-trap "rm -rf $TMPDIR" EXIT
-
-git clone --depth 1 https://github.com/jvhs0706/zkllm-ccs2024.git "$TMPDIR/src"
-# Remove .git so it becomes a plain folder — otherwise git treats it as a
-# submodule/gitlink (mode 160000) and the outer repo only stores a pointer.
-rm -rf "$TMPDIR/src/.git"
-# Move everything (including hidden files) to $DEST
-mkdir -p "$DEST"
-shopt -s dotglob
-mv "$TMPDIR/src"/* "$DEST"/
-shopt -u dotglob
-
-cd "$DEST"
-
-# --- Patch Makefile: use /usr/local/cuda instead of $CONDA_PREFIX ---
-python3 - <<'PY'
-import re
-with open('Makefile') as f:
-    mf = f.read()
-mf = mf.replace('NVCC := $(CONDA_PREFIX)/bin/nvcc', 'NVCC := /usr/local/cuda/bin/nvcc')
-mf = mf.replace('INCLUDES := -I$(CONDA_PREFIX)/include', 'INCLUDES := -I/usr/local/cuda/include')
-mf = mf.replace('LIBS := -L$(CONDA_PREFIX)/lib', 'LIBS := -L/usr/local/cuda/lib64')
-mf = re.sub(r'ARCH := sm_\d+', 'ARCH := sm_90', mf)
-with open('Makefile', 'w') as f:
-    f.write(mf)
-print("Makefile patched (paths + ARCH=sm_90)")
-PY
-
-# --- Patch self-attn.cu: n_heads as CLI arg + zkSoftmax tuning ---
-cat > self-attn.cu <<'EOF'
 #include "zksoftmax.cuh"
 #include "zkfc.cuh"
 #include "fr-tensor.cuh"
@@ -132,22 +81,3 @@ int main(int argc, char *argv[])
     cerr << "Unknown mode: " << mode << endl;
     return 1;
 }
-EOF
-echo "self-attn.cu patched"
-
-# --- Patch ffn.cu: swiglu table 2^22 -> 2^20 ---
-python3 - <<'PY'
-import re
-with open('ffn.cu') as f:
-    src = f.read()
-new_src = re.sub(
-    r"tLookupRangeMapping swiglu\(-\(1 << \d+\), 1 << \d+, swiglu_values\);",
-    "tLookupRangeMapping swiglu(-(1 << 19), 1 << 20, swiglu_values);",
-    src,
-)
-with open('ffn.cu', 'w') as f:
-    f.write(new_src)
-print("ffn.cu patched")
-PY
-
-echo "Vendoring complete."
