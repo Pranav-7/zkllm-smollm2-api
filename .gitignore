@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+.env
+.mypy_cache/
+.pytest_cache/
+.idea/
+.vscode/
+.DS_Store
+data/
+# Don't gitignore zkllm/ — it's vendored intentionally.
+# But ignore build artifacts inside it:
+zkllm/*.o
+zkllm/ppgen
+zkllm/commit-param
+zkllm/rmsnorm
+zkllm/self-attn
+zkllm/ffn
+zkllm/skip-connection
+zkllm/build/

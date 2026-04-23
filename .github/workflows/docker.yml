@@ -1,0 +1,75 @@
+name: Build & push Docker image
+
+# Triggers:
+#   - push to main                   → pushes :main and :<sha>
+#   - tag  v*.*.*                    → pushes :vX.Y.Z and :latest
+#   - manual dispatch                → pushes :<sha>
+on:
+  push:
+    branches: [main]
+    tags:     ["v*.*.*"]
+  workflow_dispatch:
+
+env:
+  IMAGE: ${{ secrets.DOCKERHUB_USERNAME || 'pranav6773' }}/zkllm-smollm2
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    # No GPU on the runner — nvcc will cross-compile for sm_90.
+    # Image is large (~8-10 GB); the standard GH runner has ~14 GB free,
+    # so we aggressively prune docker + /opt first.
+    steps:
+      - name: Free disk space on runner
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                     /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune -af || true
+          df -h
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=,format=short
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64          # H200 is amd64; don't waste time on arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+          build-args: |
+            CUDA_VERSION=12.4.1
+            SM_ARCH=sm_90
+
+      - name: Image summary
+        run: |
+          echo "Pushed tags:"
+          echo "${{ steps.meta.outputs.tags }}"

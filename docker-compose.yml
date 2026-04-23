@@ -1,0 +1,29 @@
+# Local testing on a host with an NVIDIA GPU + nvidia-container-toolkit installed.
+# Not needed for H200 production — you'll run `docker run` directly.
+services:
+  zkllm:
+    image: ${DOCKER_IMAGE:-zkllm-smollm2:local}
+    build:
+      context: .
+      args:
+        CUDA_VERSION: "12.4.1"
+        SM_ARCH: "sm_90"
+    ports:
+      - "8000:8000"
+    volumes:
+      - zkllm-data:/data
+    environment:
+      - MAX_TOKENS_HARD_CAP=10
+      - DEFAULT_MAX_TOKENS=1
+      - N_LAYERS_PROVE=32
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  zkllm-data:

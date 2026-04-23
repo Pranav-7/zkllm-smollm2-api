@@ -1,0 +1,9 @@
+fastapi==0.115.4
+uvicorn[standard]==0.32.0
+pydantic==2.9.2
+transformers==4.46.2
+accelerate==1.0.1
+# torch is installed via the NVIDIA CUDA wheel index in the Dockerfile
+numpy<2.0
+safetensors
+sentencepiece
