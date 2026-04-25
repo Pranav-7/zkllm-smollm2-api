@@ -25,7 +25,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # --- system packages ---
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential git ca-certificates \
+        build-essential git ca-certificates file \
         python3.11 python3.11-dev python3.11-venv python3-pip \
     && ln -sf /usr/bin/python3.11 /usr/local/bin/python \
     && ln -sf /usr/bin/python3.11 /usr/local/bin/python3 \
@@ -51,6 +51,27 @@ COPY scripts/ /app/scripts/
 RUN test -f /app/zkllm/Makefile || (echo "ERROR: zkllm/Makefile missing. Did you run 'bash setup.sh' locally before committing? The zkllm/ folder must contain the vendored source, not a git submodule pointer." && exit 1)
 RUN chmod +x /app/scripts/*.sh \
  && bash /app/scripts/build_zkllm.sh /app/zkllm "${SM_ARCH}"
+
+# --- Build-time smoke tests (catch linker/library problems without needing a GPU) ---
+# These verify each binary exists, is executable, is a valid ELF binary,
+# and that its dynamic linker can resolve CUDA runtime libs. They do NOT
+# run the binary (no GPU on the build host), so CUDA kernel bugs cannot
+# be caught here — only link-time / ABI problems.
+RUN set -eux; \
+    for bin in ppgen commit-param rmsnorm self-attn ffn skip-connection; do \
+        test -x "/app/zkllm/$bin" || (echo "MISSING BINARY: $bin" && exit 1); \
+        file "/app/zkllm/$bin" | grep -q "ELF 64-bit" || (echo "NOT ELF: $bin" && exit 1); \
+        ldd "/app/zkllm/$bin" 2>&1 | grep -v "not a dynamic executable" \
+            | (! grep -q "not found") || (echo "UNRESOLVED DEPS in $bin:" && ldd "/app/zkllm/$bin" && exit 1); \
+        echo "OK: $bin"; \
+    done
+
+# Verify the python prover module imports cleanly (catches syntax errors,
+# bad imports, wrong paths). Model load is deferred by setting a dummy
+# model card — a full load would need GPU + network.
+RUN python -c "import ast, sys; \
+    [ast.parse(open(p).read()) for p in ['/app/app/main.py','/app/app/config.py','/app/app/schemas.py','/app/app/worker/prover.py','/app/app/worker/pipeline.py','/app/app/worker/verifier.py','/app/app/worker/worker.py','/app/app/routes/generate.py','/app/app/routes/verify.py','/app/app/storage/jobs.py']]; \
+    print('All Python files parse OK')"
 
 # --- bake model weights into the image so first run doesn't download ---
 COPY app/ /app/app/

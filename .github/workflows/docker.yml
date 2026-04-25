@@ -63,8 +63,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to:   type=gha,mode=max
+          # GHA cache was causing flaky 502s. Rebuild times are acceptable (~20 min
+          # with Docker Hub layer reuse). Re-enable if a faster alternative is configured.
           build-args: |
             CUDA_VERSION=12.4.1
             SM_ARCH=sm_90
