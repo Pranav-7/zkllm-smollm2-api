@@ -53,6 +53,15 @@ class VerifyRequest(BaseModel):
     job_id: str
 
 
+class VerifyEnqueueResponse(BaseModel):
+    """Returned by POST /verify (async). Poll /verify/status/{verify_job_id}."""
+    verify_job_id: str
+    source_job_id: str
+    status: JobStatus
+    message: str
+    estimated_seconds: int
+
+
 class LayerVerification(BaseModel):
     layer: int
     weight_name: str

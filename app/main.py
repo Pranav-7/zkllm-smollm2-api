@@ -21,8 +21,15 @@ def _startup():
 @app.get("/")
 def root():
     return {"service": API_TITLE, "version": API_VERSION,
-            "docs": "/docs", "endpoints": ["/generate", "/status/{id}",
-                                           "/result/{id}", "/verify"]}
+            "docs": "/docs",
+            "endpoints": [
+                "POST /generate",
+                "GET  /status/{job_id}",
+                "GET  /result/{job_id}",
+                "POST /verify",
+                "GET  /verify/status/{verify_job_id}",
+                "GET  /verify/result/{verify_job_id}",
+            ]}
 
 
 @app.get("/health")

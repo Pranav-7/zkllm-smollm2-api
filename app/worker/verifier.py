@@ -18,7 +18,7 @@ import hashlib
 import subprocess
 import time
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Callable, Optional
 
 from ..config import ZKLLM_ROOT, WORKDIR
 from ..schemas import LayerVerification
@@ -32,11 +32,17 @@ def _sha256(p: Path) -> str:
     return h.hexdigest()
 
 
-def verify_job_commitments(job_meta: dict) -> tuple[bool, int, int, List[LayerVerification], float, str]:
+def verify_job_commitments(
+    job_meta: dict,
+    on_progress: Optional[Callable[..., None]] = None,
+) -> tuple[bool, int, int, List[LayerVerification], float, str]:
     """
     job_meta['result']['tokens'][i]['commitment_files'] must list commitment
     file paths (relative to WORKDIR) saved at generation time, along with
     the int .bin files used to produce them.
+
+    on_progress(weights_checked=int, weights_total=int, phase=str) is invoked
+    after every commitment is processed (used for async job progress reporting).
     """
     t0 = time.time()
     details: List[LayerVerification] = []
@@ -55,11 +61,18 @@ def verify_job_commitments(job_meta: dict) -> tuple[bool, int, int, List[LayerVe
 
     first = tokens[0]
     commit_files: List[str] = first.get("commitment_files", [])
+    total = len(commit_files)
+    if on_progress is not None:
+        on_progress(weights_checked=0, weights_total=total, phase="starting")
+
+    def _report(i: int, p: str) -> None:
+        if on_progress is not None:
+            on_progress(weights_checked=i + 1, weights_total=total, phase=p)
 
     # Each commitment file is named "{prefix}-{weight_name}-commitment.bin"
     # Its matching int-bin is "{prefix}-{weight_name}-int.bin"
     # Its pp file is "{weight_name}-pp.bin"
-    for cf_rel in commit_files:
+    for idx, cf_rel in enumerate(commit_files):
         cf = WORKDIR / Path(cf_rel).name
         if not cf.exists():
             details.append(LayerVerification(
@@ -68,6 +81,7 @@ def verify_job_commitments(job_meta: dict) -> tuple[bool, int, int, List[LayerVe
                 recomputed_commitment_sha256="<missing>",
                 match=False))
             mismatches += 1
+            _report(idx, f"missing:{cf.name}")
             continue
 
         expected = _sha256(cf)
@@ -87,6 +101,7 @@ def verify_job_commitments(job_meta: dict) -> tuple[bool, int, int, List[LayerVe
                 recomputed_commitment_sha256="<unparseable-name>",
                 match=False))
             mismatches += 1
+            _report(idx, f"unparseable:{cf.name}")
             continue
 
         int_path    = WORKDIR / f"layer-{layer_idx}-{weight_name}-int.bin"
@@ -100,6 +115,7 @@ def verify_job_commitments(job_meta: dict) -> tuple[bool, int, int, List[LayerVe
                 recomputed_commitment_sha256="<source-files-missing>",
                 match=False))
             mismatches += 1
+            _report(idx, f"sources-missing:layer-{layer_idx}-{weight_name}")
             continue
 
         # Re-run commit-param. We need the (M, N) shape; read int file size
@@ -119,6 +135,7 @@ def verify_job_commitments(job_meta: dict) -> tuple[bool, int, int, List[LayerVe
                 recomputed_commitment_sha256="<no-shape-sidecar>",
                 match=False))
             mismatches += 1
+            _report(idx, f"no-shape:layer-{layer_idx}-{weight_name}")
             continue
 
         with open(shape_path) as f:
@@ -140,6 +157,7 @@ def verify_job_commitments(job_meta: dict) -> tuple[bool, int, int, List[LayerVe
                 recomputed_commitment_sha256=f"<commit-param-failed: {r.stderr[:100]}>",
                 match=False))
             mismatches += 1
+            _report(idx, f"commit-failed:layer-{layer_idx}-{weight_name}")
             continue
 
         recomputed = _sha256(recomp_path)
@@ -154,6 +172,7 @@ def verify_job_commitments(job_meta: dict) -> tuple[bool, int, int, List[LayerVe
         if not match:
             mismatches += 1
 
+        _report(idx, f"layer-{layer_idx}-{weight_name}")
     verified = (mismatches == 0 and len(details) > 0)
     note = ("Commitment re-check only; full SNARK verification not exposed "
             "by upstream zkllm-ccs2024 (prover+verifier fused in prover binary).")
