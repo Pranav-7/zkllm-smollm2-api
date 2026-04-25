@@ -66,6 +66,9 @@ RUN set -eux; \
         echo "OK: $bin"; \
     done
 
+# --- copy app code BEFORE the AST check (the check reads from /app/app/) ---
+COPY app/ /app/app/
+
 # Verify the python prover module imports cleanly (catches syntax errors,
 # bad imports, wrong paths). Model load is deferred by setting a dummy
 # model card — a full load would need GPU + network.
@@ -74,7 +77,6 @@ RUN python -c "import ast, sys; \
     print('All Python files parse OK')"
 
 # --- bake model weights into the image so first run doesn't download ---
-COPY app/ /app/app/
 ENV HF_HOME=/opt/hf-cache
 RUN python -c "\
 from transformers import AutoModelForCausalLM, AutoTokenizer; \
