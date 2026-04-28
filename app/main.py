@@ -5,12 +5,14 @@ from fastapi.responses import JSONResponse
 from .config import API_TITLE, API_VERSION
 from .routes import generate as generate_routes
 from .routes import verify as verify_routes
+from .routes import composite as composite_routes
 from .worker import worker as worker_mod
 
 
 app = FastAPI(title=API_TITLE, version=API_VERSION)
 app.include_router(generate_routes.router)
 app.include_router(verify_routes.router)
+app.include_router(composite_routes.router)
 
 
 @app.on_event("startup")
@@ -29,6 +31,8 @@ def root():
                 "POST /verify",
                 "GET  /verify/status/{verify_job_id}",
                 "GET  /verify/result/{verify_job_id}",
+                "GET  /composite/{job_id}",
+                "GET  /composite/{job_id}/download",
             ]}
 
 

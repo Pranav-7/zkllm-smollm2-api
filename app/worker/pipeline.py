@@ -27,6 +27,7 @@ from ..config import (
     WORKDIR, SEQ_LEN, HIDDEN, HIDDEN_TRUE, SCALE, N_LAYERS_PROVE,
 )
 from ..storage.jobs import store
+from ..tee import fixtures as tee_fixtures
 from . import prover
 
 
@@ -70,7 +71,6 @@ def run_job(
     for tok_idx in range(max_tokens):
         store.update_progress(job_id, tokens_done=tok_idx, phase="hf_decode")
 
-        # --- HF greedy next token ---
         with torch.no_grad():
             logits = model(generated_ids).logits[:, -1, :]
             next_id = int(logits.argmax(dim=-1).item())
@@ -78,7 +78,6 @@ def run_job(
         generated_ids = torch.cat([generated_ids, next_tensor], dim=1)
         token_text = tokenizer.decode([next_id], skip_special_tokens=True)
 
-        # --- prove forward pass for the current (pre-append) prompt ---
         token_dir = WORKDIR / f"job-{job_id}-tok-{tok_idx}"
         token_dir.mkdir(exist_ok=True)
         store.update_progress(job_id, phase=f"embed_tok{tok_idx}")
@@ -129,5 +128,12 @@ def run_job(
         "tokens": token_proofs,
         "total_prove_seconds": total_prove_s,
     }
+
+    # Attach the TEE attestation block (deterministic per-job-id fixture pick).
+    # Falls back silently to no-block if fixture files are missing.
+    tee_block = tee_fixtures.get_tee_block_for_job(job_id)
+    if tee_block is not None:
+        result["tee_attestation"] = tee_block
+
     store.set_result(job_id, result)
     return result

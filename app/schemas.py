@@ -1,6 +1,6 @@
 """Pydantic models for API request/response shapes."""
 from __future__ import annotations
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Dict, Any
 from pydantic import BaseModel, Field
 from .config import MAX_TOKENS_HARD_CAP, DEFAULT_MAX_TOKENS
 
@@ -47,6 +47,7 @@ class ResultResponse(BaseModel):
     generated_text: str
     tokens: List[TokenProof]
     total_prove_seconds: float
+    tee_attestation: Optional[Dict[str, Any]] = None
 
 
 class VerifyRequest(BaseModel):
@@ -78,3 +79,16 @@ class VerifyResponse(BaseModel):
     details: List[LayerVerification]
     verify_seconds: float
     note: str
+    tee_attestation: Optional[Dict[str, Any]] = None
+
+
+class CompositeProofResponse(BaseModel):
+    """Combined zk + TEE proof for a single inference job."""
+    job_id: str
+    prompt: str
+    generated_text: str
+    zk_proof: Dict[str, Any]                            # {tokens, total_prove_seconds}
+    zk_verification: Optional[Dict[str, Any]] = None    # null until /verify completes
+    tee_proof: Optional[Dict[str, Any]] = None          # cleaned tee_attestation block
+    tee_verification: Dict[str, Any]
+    composite_verified: Optional[bool] = None           # null until zk verification done

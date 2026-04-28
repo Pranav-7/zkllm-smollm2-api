@@ -44,8 +44,6 @@ class JobStore:
                 "kind": "verify",
                 "status": "pending",
                 "source_job_id": source_job_id,
-                # progress shape differs from generate; route handler treats
-                # "progress" as an opaque dict.
                 "progress": {"weights_checked": 0, "weights_total": 0,
                              "phase": "queued"},
                 "started_at": None,
@@ -87,6 +85,20 @@ class JobStore:
                 self._jobs[job_id]["status"] = "failed"
                 self._jobs[job_id]["error"] = error
                 self._jobs[job_id]["updated_at"] = time.time()
+
+    def find_done_verify_for_source(self, source_job_id: str) -> Optional[Dict[str, Any]]:
+        """Return the most recently-updated 'done' verify job for source_job_id, or None."""
+        with self._lock:
+            candidates = [
+                j for j in self._jobs.values()
+                if j.get("kind") == "verify"
+                and j.get("source_job_id") == source_job_id
+                and j.get("status") == "done"
+            ]
+            if not candidates:
+                return None
+            candidates.sort(key=lambda j: j.get("updated_at", 0) or 0, reverse=True)
+            return dict(candidates[0])
 
 
 # Module-level singleton

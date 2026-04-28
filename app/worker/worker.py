@@ -15,6 +15,7 @@ import time
 import traceback
 
 from ..storage.jobs import store
+from ..tee import fixtures as tee_fixtures
 from . import pipeline
 
 
@@ -30,7 +31,6 @@ def enqueue(job_id: str) -> None:
 
 def _run_verify_job(job_id: str, job: dict) -> None:
     """Run a verify job: re-check commitments of the source generate job."""
-    # Lazy import to avoid loading verifier at module import time
     from . import verifier
     from ..schemas import VerifyResponse
 
@@ -56,9 +56,8 @@ def _run_verify_job(job_id: str, job: dict) -> None:
         verifier.verify_job_commitments(source, on_progress=_on_progress)
     )
 
-    # Build response payload that matches VerifyResponse schema
     result = VerifyResponse(
-        job_id=source_id,                 # the source generate job
+        job_id=source_id,
         verified=verified,
         total_layers_checked=total,
         mismatches=mismatches,
@@ -66,6 +65,12 @@ def _run_verify_job(job_id: str, job: dict) -> None:
         verify_seconds=elapsed,
         note=note,
     ).model_dump()
+
+    # Attach the SAME tee fixture as the source generate job (deterministic by source_id).
+    tee_block = tee_fixtures.get_tee_block_for_job(source_id)
+    if tee_block is not None:
+        result["tee_attestation"] = tee_block
+
     store.set_result(job_id, result)
 
 
